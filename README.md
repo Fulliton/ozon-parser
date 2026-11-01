@@ -208,7 +208,14 @@ npm test
 
 ### 4. Запуск бота
 
-**Обычный запуск:**
+**Запуск через Docker (рекомендуется для сервера):**
+```bash
+docker compose up -d --build
+docker compose logs -f
+```
+Подробное руководство по серверному деплою: [DEPLOY.md](file:///home/fulliton/work/tg-shopper-bot/DEPLOY.md).
+
+**Обычный локальный запуск:**
 ```bash
 npm start
 ```

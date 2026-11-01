@@ -1,13 +1,81 @@
-# Руководство по развертыванию на виртуальном сервере (VPS / Ubuntu / Debian)
+# Руководство по развертыванию на сервере (Docker / VPS / Ubuntu / Debian)
 
 На виртуальном сервере (VPS) нет физического монитора и графической оболочки (GUI). 
 Так как Ozon блокирует стандартный режим `headless`, бот использует связку **Google Chrome + Xvfb** (виртуальный дисплей в оперативной памяти). Для защиты Ozon браузер выглядит как реальный компьютер с монитором 1920x1080.
 
 ---
 
-## 1. Установка системных зависимостей
+## 🐳 Способ 1: Развертывание в Docker (Рекомендуемый)
 
-Подключитесь к VPS по SSH и установите необходимые пакеты:
+Docker-образ уже содержит все необходимые системные зависимости: официальный Google Chrome, виртуальный дисплей Xvfb, русские шрифты, `dumb-init` для защиты от процессов-зомби и Node.js 20.
+
+### 1. Подготовка на сервере
+Склонируйте репозиторий на сервер:
+```bash
+git clone <URL_РЕПОЗИТОРИЯ> /opt/tg-shopper-bot
+cd /opt/tg-shopper-bot
+```
+
+### 2. Настройка окружения (`.env`)
+Создайте файл `.env`:
+```bash
+cp .env.example .env
+nano .env
+```
+Укажите ваш `BOT_TOKEN`:
+```env
+BOT_TOKEN=123456789:ABCDefGhIJKlmNoPQRsTUVwxyZ
+CHECK_INTERVAL_CRON=*/30 * * * *
+DATABASE_PATH=./data/tracker.db
+DEMO_MODE=false
+```
+
+### 3. Перенос Ozon кук (`data/ozon-cookies.json`)
+Ozon требует сессионные куки для обхода антибот-проверки. 
+Поскольку том `./data` смонтирован в контейнер, вы можете просто положить файл с куками в папку `./data/`:
+
+* **Вариант А (Скопировать файл с локального ПК через SCP):**
+  ```bash
+  scp ./data/ozon-cookies.json user@ip_сервера:/opt/tg-shopper-bot/data/
+  ```
+
+* **Вариант Б (Импорт через команду из строки Cookie):**
+  ```bash
+  docker compose run --rm bot npm run import-cookies "__Secure-access-token=...; abt_data=..."
+  ```
+
+### 4. Сборка и запуск контейнера
+```bash
+# Сборка и запуск в фоновом режиме
+docker compose up -d --build
+```
+
+### Полезные команды Docker:
+* **Просмотр логов в реальном времени:**
+  ```bash
+  docker compose logs -f bot
+  ```
+* **Перезапуск бота:**
+  ```bash
+  docker compose restart bot
+  ```
+* **Остановка контейнера:**
+  ```bash
+  docker compose down
+  ```
+* **Обновление бота после `git pull`:**
+  ```bash
+  git pull
+  docker compose up -d --build
+  ```
+
+---
+
+## 💻 Способ 2: Классическое развертывание на хосте (без Docker)
+
+Если вы предпочитаете запускать бота напрямую в системе без Docker:
+
+### 1. Установка системных зависимостей
 
 ```bash
 sudo apt update && sudo apt upgrade -y
@@ -26,9 +94,7 @@ rm google-chrome-stable_current_amd64.deb
 google-chrome --version
 ```
 
----
-
-## 2. Установка Node.js (v20 или v22)
+### 2. Установка Node.js (v20 или v22)
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
@@ -37,47 +103,14 @@ node -v
 npm -v
 ```
 
----
-
-## 3. Развертывание проекта
-
-Клонируйте репозиторий или скопируйте файлы на сервер (например, в `/opt/tg-shopper-bot`):
+### 3. Установка зависимостей проекта
 
 ```bash
 cd /opt/tg-shopper-bot
 npm install --omit=dev
 ```
 
-### Настройка `.env`
-Создайте файл `.env`:
-```env
-BOT_TOKEN=ваш_токен_телеграм_бота
-DATABASE_PATH=./data/tracker.db
-CHECK_INTERVAL_CRON=*/30 * * * *
-DEMO_MODE=false
-```
-
----
-
-## 4. Перенос Ozon кук сессии (`data/ozon-cookies.json`)
-
-На сервере без экрана капчу решить интерактивно нельзя, поэтому куки сессии (с токеном `abt_data`) передаются с локального компьютера:
-
-**Способ 1: Скопировать готовый файл с ПК на сервер (через SCP)**
-```bash
-scp ./data/ozon-cookies.json user@ip_сервера:/opt/tg-shopper-bot/data/
-```
-
-**Способ 2: Через команду импорта (если у вас есть строка Cookie из браузера ПК)**
-```bash
-npm run import-cookies "__Secure-access-token=...; abt_data=..."
-```
-
----
-
-## 5. Запуск в фоновом режиме (24/7)
-
-### Вариант А: Через PM2 (рекомендуется)
+### 4. Запуск в фоновом режиме (24/7) через PM2
 
 ```bash
 sudo npm install -g pm2
@@ -86,50 +119,12 @@ pm2 save
 pm2 startup
 ```
 
-Управление ботом:
-* Логи: `pm2 logs tg-shopper-bot`
-* Перезапуск: `pm2 restart tg-shopper-bot`
-* Статус: `pm2 status`
-
-### Вариант Б: Через Systemd Service
-
-Создайте файл службы:
-```bash
-sudo nano /etc/systemd/system/tg-shopper-bot.service
-```
-
-Вставьте конфигурацию:
-```ini
-[Unit]
-Description=Telegram Ozon Price Tracker Bot
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/tg-shopper-bot
-ExecStart=/usr/bin/node src/index.js
-Restart=always
-RestartSec=10
-Environment=NODE_ENV=production
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Активируйте службу:
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable tg-shopper-bot
-sudo systemctl start tg-shopper-bot
-sudo journalctl -u tg-shopper-bot -f
-```
-
 ---
 
-## Как это устроено внутри
+## ⚙️ Как устроен парсинг Ozon внутри
 
 1. В коде [`src/services/ozonParserService.js`](file:///home/fulliton/work/tg-shopper-bot/src/services/ozonParserService.js) настроен автоматический детект дисплея:
-   * Если переменная `$DISPLAY` отсутствует (как на VPS), библиотека `puppeteer-real-browser` автоматически поднимает виртуальный Xvfb-буфер `1920x1080x24` в оперативной памяти.
+   * Если переменная `$DISPLAY` отсутствует (как на VPS / в Docker), библиотека `puppeteer-real-browser` автоматически поднимает виртуальный Xvfb-буфер `1920x1080x24` в оперативной памяти.
    * Google Chrome запускается внутри этого буфера с настоящим разрешением экрана, WebGL и холстом.
 2. Ozon не видит признаков headless-режима и возвращает данные через быстрый `entrypoint-api` за 2-3 секунды.
+3. База данных SQLite (`tracker.db`) и куки Ozon сохраняются в смонтированной директории `./data/`, благодаря чему данные не теряются при перезапусках контейнера.

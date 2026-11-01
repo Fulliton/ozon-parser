@@ -1,0 +1,17 @@
+node_modules
+.git
+.github
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+logs/
+*.log
+test/
+.DS_Store
+.idea
+.vscode
