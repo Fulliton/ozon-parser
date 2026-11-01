@@ -1,3 +1,22 @@
+# Stage 1: Build dependencies and compile native addons
+FROM node:20-bookworm-slim AS builder
+
+WORKDIR /app
+
+# Install build tools needed to compile native C++ addons (sqlite3)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY package*.json ./
+
+# Force sqlite3 compilation from source to link against Debian Bookworm's glibc (2.36)
+ENV npm_config_build_from_source=sqlite3
+RUN npm ci --omit=dev && npm rebuild sqlite3 --build-from-source
+
+# Stage 2: Production runtime image
 FROM node:20-bookworm-slim
 
 # Prevent interactive prompts during package installation
@@ -50,9 +69,9 @@ ENV NODE_ENV=production
 
 WORKDIR /app
 
-# Install dependencies first for better layer caching
+# Copy production node_modules with compiled native addons from builder
+COPY --from=builder /app/node_modules ./node_modules
 COPY package*.json ./
-RUN npm ci --omit=dev
 
 # Copy application code
 COPY src/ ./src/
