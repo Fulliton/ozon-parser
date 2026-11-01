@@ -846,9 +846,29 @@ async function resolveUrlViaBrowser(shortUrl) {
       });
     }
 
-    await page.goto(shortUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    const finalUrl = page.url();
-    return finalUrl;
+    // Intercept redirect location headers in flight
+    let redirectLocation = null;
+    page.on('response', (res) => {
+      const status = res.status();
+      const loc = res.headers()['location'];
+      if (status >= 300 && status < 400 && loc) {
+        redirectLocation = loc.startsWith('http') ? loc : new URL(loc, shortUrl).href;
+        console.log(`[Puppeteer] Перехвачен редирект в браузере -> ${redirectLocation}`);
+      }
+    });
+
+    try {
+      await page.goto(shortUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    } catch (_) {
+      // If navigation timed out due to slow page assets, check if redirect header was already caught
+    }
+
+    const currentUrl = page.url();
+    if (redirectLocation && (currentUrl.includes('/t/') || !/\/product\//i.test(currentUrl))) {
+      return redirectLocation;
+    }
+
+    return currentUrl;
   } catch (err) {
     console.warn(`[Puppeteer] Ошибка разрешения короткой ссылки через браузер: ${err.message}`);
     return shortUrl;

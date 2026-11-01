@@ -1,3 +1,4 @@
+const http2 = require('http2');
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const config = require('../config');
@@ -51,8 +52,60 @@ function extractUrlFromText(text) {
 }
 
 /**
+ * Resolves redirect via native HTTP/2 (bypasses Ozon's HTTP/1.1 bot filter)
+ * @param {string} url
+ * @returns {Promise<string|null>}
+ */
+function resolveRedirectViaHttp2(url) {
+  return new Promise((resolve) => {
+    try {
+      const parsed = new URL(url);
+      const client = http2.connect(parsed.origin, { timeout: 8000 });
+      let resolved = false;
+
+      const finish = (result) => {
+        if (!resolved) {
+          resolved = true;
+          try { client.close(); } catch (_) {}
+          resolve(result);
+        }
+      };
+
+      client.on('error', () => finish(null));
+      client.on('timeout', () => {
+        try { client.destroy(); } catch (_) {}
+        finish(null);
+      });
+
+      const req = client.request({
+        ':method': 'GET',
+        ':path': parsed.pathname + parsed.search,
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'accept-language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+      });
+
+      req.on('response', (headers) => {
+        const status = Number(headers[':status']);
+        const location = headers['location'];
+        if (status >= 300 && status < 400 && location) {
+          finish(new URL(location, url).href);
+        } else {
+          finish(null);
+        }
+      });
+
+      req.on('error', () => finish(null));
+      req.end();
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+/**
  * Resolves short links (e.g. ozon.ru/t/..., onelink.me) by following HTTP redirects
- * with proxy support and fallback to real Chrome browser if datacenter IP is blocked.
+ * using modern HTTP/2, global fetch, and Puppeteer fallback.
  * @param {string} url
  * @returns {Promise<string>}
  */
@@ -62,23 +115,54 @@ async function resolveRedirectUrl(url) {
     currentUrl = `https://${currentUrl}`;
   }
 
-  let httpsAgent = null;
-  if (config.proxyUrl) {
-    try {
-      httpsAgent = new HttpsProxyAgent(config.proxyUrl);
-    } catch (e) {
-      console.warn('[UrlParser] Не удалось инициализировать HttpsProxyAgent:', e.message);
-    }
-  }
-
   for (let i = 0; i < 5; i++) {
     // If it's already a full product URL with SKU, we don't need further redirects
     if (/\/product\/(?:[^/]+-)?\d+/i.test(currentUrl) || /[?&](?:sku|id)=\d+/i.test(currentUrl)) {
       return currentUrl;
     }
 
+    console.log(`[UrlParser] Резолв редиректа шаг ${i + 1}: ${currentUrl}`);
+
+    // 1. Try native HTTP/2 first (Ozon accepts HTTP/2 without 403 bot blocks)
     try {
-      console.log(`[UrlParser] Резолв редиректа шаг ${i + 1}: ${currentUrl}`);
+      const h2Next = await resolveRedirectViaHttp2(currentUrl);
+      if (h2Next && h2Next !== currentUrl) {
+        console.log(`[UrlParser] Редирект (HTTP/2) -> ${h2Next}`);
+        currentUrl = h2Next;
+        continue;
+      }
+    } catch (e) {
+      console.log(`[UrlParser] HTTP/2 резолв не удался: ${e.message}`);
+    }
+
+    // 2. Try global fetch (Node 20+ undici with modern TLS)
+    try {
+      const res = await fetch(currentUrl, {
+        redirect: 'manual',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+        },
+      });
+
+      if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
+        const nextUrl = new URL(res.headers.get('location'), currentUrl).href;
+        console.log(`[UrlParser] Редирект (fetch ${res.status}) -> ${nextUrl}`);
+        currentUrl = nextUrl;
+        continue;
+      }
+    } catch (e) {
+      console.log(`[UrlParser] Fetch резолв не удался: ${e.message}`);
+    }
+
+    // 3. Try axios as legacy fallback
+    try {
+      let httpsAgent = null;
+      if (config.proxyUrl) {
+        try { httpsAgent = new HttpsProxyAgent(config.proxyUrl); } catch (_) {}
+      }
+
       const response = await axios.get(currentUrl, {
         maxRedirects: 0,
         validateStatus: (status) => status >= 200 && status < 400,
@@ -87,29 +171,29 @@ async function resolveRedirectUrl(url) {
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         },
         httpsAgent: httpsAgent || undefined,
-        timeout: 10000,
+        timeout: 8000,
       });
 
       if (response.status >= 300 && response.status < 400 && response.headers.location) {
         const nextUrl = new URL(response.headers.location, currentUrl).href;
-        console.log(`[UrlParser] Редирект HTTP ${response.status} -> ${nextUrl}`);
+        console.log(`[UrlParser] Редирект (axios ${response.status}) -> ${nextUrl}`);
         currentUrl = nextUrl;
-      } else {
-        return currentUrl;
+        continue;
       }
-    } catch (error) {
-      if (error.response && error.response.headers && error.response.headers.location) {
-        const nextUrl = new URL(error.response.headers.location, currentUrl).href;
-        console.log(`[UrlParser] Редирект (через catch) -> ${nextUrl}`);
+    } catch (axiosErr) {
+      if (axiosErr.response && axiosErr.response.headers && axiosErr.response.headers.location) {
+        const nextUrl = new URL(axiosErr.response.headers.location, currentUrl).href;
+        console.log(`[UrlParser] Редирект (axios catch) -> ${nextUrl}`);
         currentUrl = nextUrl;
-      } else {
-        console.warn(`[UrlParser] Не удалось разрешить редирект через axios на ${currentUrl}: ${error.response?.status ? 'HTTP ' + error.response.status : error.message}`);
-        break;
+        continue;
       }
+      console.warn(`[UrlParser] Axios получил ${axiosErr.response?.status ? 'HTTP ' + axiosErr.response.status : axiosErr.message} на ${currentUrl}`);
     }
+
+    break;
   }
 
-  // Fallback to real browser if axios was blocked by Ozon Cloudflare/Kasada
+  // 4. Fallback to real browser if still on short link
   if (currentUrl.includes('/t/') || currentUrl.includes('onelink.me')) {
     console.log(`[UrlParser] Попытка разрешить короткую ссылку через Puppeteer: ${currentUrl}`);
     try {
