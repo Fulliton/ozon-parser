@@ -1,0 +1,26 @@
+# Node modules
+node_modules/
+
+# Environment variables
+.env
+
+# SQLite Database files
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS / Editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Lighthouse temporary artifacts
+*lighthouse*
+

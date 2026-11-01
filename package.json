@@ -1,0 +1,36 @@
+{
+  "name": "ozon-price-tracker-bot",
+  "version": "1.0.0",
+  "description": "Telegram-бот на Node.js для отслеживания изменения цен на товары Ozon",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node test/testParser.js",
+    "solve-captcha": "node src/scripts/solveCaptcha.js",
+    "import-cookies": "node src/scripts/importCookies.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "ozon",
+    "price-tracker",
+    "nodejs"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "https-proxy-agent": "^9.1.0",
+    "node-cron": "^3.0.3",
+    "puppeteer": "^25.16.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "puppeteer-real-browser": "^1.4.4",
+    "sequelize": "^6.37.8",
+    "sqlite3": "^6.0.1",
+    "telegraf": "^4.16.3",
+    "umzug": "^3.8.3"
+  }
+}
