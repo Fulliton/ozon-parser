@@ -821,6 +821,45 @@ async function closeSharedBrowser() {
   }
 }
 
+/**
+ * Resolves a short redirect URL (e.g. ozon.ru/t/...) using real Chrome browser
+ * @param {string} shortUrl
+ * @returns {Promise<string>}
+ */
+async function resolveUrlViaBrowser(shortUrl) {
+  if (config.demoMode) {
+    return shortUrl;
+  }
+
+  let browser = null;
+  let page = null;
+  try {
+    browser = await getBrowser();
+    page = await browser.newPage();
+    await page.setViewport({ width: 1440, height: 900 });
+
+    const proxy = parseProxy(config.proxyUrl);
+    if (proxy?.username && proxy?.password) {
+      await page.authenticate({
+        username: proxy.username,
+        password: proxy.password,
+      });
+    }
+
+    await page.goto(shortUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    const finalUrl = page.url();
+    return finalUrl;
+  } catch (err) {
+    console.warn(`[Puppeteer] Ошибка разрешения короткой ссылки через браузер: ${err.message}`);
+    return shortUrl;
+  } finally {
+    if (page) {
+      await page.close().catch(() => {});
+    }
+    scheduleBrowserClose(60000);
+  }
+}
+
 module.exports = {
   parseOzonProduct,
   cleanPrice,
@@ -830,4 +869,5 @@ module.exports = {
   extractItemsFromSearchWidgetStates,
   getBrowser,
   closeSharedBrowser,
+  resolveUrlViaBrowser,
 };

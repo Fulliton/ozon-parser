@@ -41,10 +41,12 @@ function registerMessageHandlers(bot) {
       }
     }
 
-    // 2. Check if message is an Ozon URL
+    // 2. Check if message is an Ozon URL or SKU
     if (!isOzonUrl(text)) {
       return next();
     }
+
+    console.log(`[Telegram] 📩 Пользователь ${userId} прислал ссылку/артикул: "${text.trim()}"`);
 
     await withChatAction(ctx, 'typing', async () => {
       const waitMsg = await ctx.reply('⚡ <i>Подключаюсь к Ozon и анализирую товар...</i>', {
@@ -66,7 +68,7 @@ function registerMessageHandlers(bot) {
           }
         );
       } catch (error) {
-        console.error(`[Telegram] Ошибка при обработке ссылки:`, error.message);
+        console.error(`[Telegram] ❌ Ошибка при обработке сообщения "${text.trim()}":`, error.message);
 
         await ctx.telegram.editMessageText(
           ctx.chat.id,
