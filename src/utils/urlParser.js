@@ -123,7 +123,39 @@ async function resolveRedirectUrl(url) {
 
     console.log(`[UrlParser] Резолв редиректа шаг ${i + 1}: ${currentUrl}`);
 
-    // 1. Try native HTTP/2 first (Ozon accepts HTTP/2 without 403 bot blocks)
+    // 1. If PROXY_URL is configured (vital for foreign VPS), route through proxy first
+    if (config.proxyUrl) {
+      try {
+        const httpsAgent = new HttpsProxyAgent(config.proxyUrl);
+        const response = await axios.get(currentUrl, {
+          maxRedirects: 0,
+          validateStatus: (status) => status >= 200 && status < 400,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+          },
+          httpsAgent,
+          timeout: 10000,
+        });
+
+        if (response.status >= 300 && response.status < 400 && response.headers.location) {
+          const nextUrl = new URL(response.headers.location, currentUrl).href;
+          console.log(`[UrlParser] Редирект (через PROXY) -> ${nextUrl}`);
+          currentUrl = nextUrl;
+          continue;
+        }
+      } catch (proxyErr) {
+        if (proxyErr.response && proxyErr.response.headers && proxyErr.response.headers.location) {
+          const nextUrl = new URL(proxyErr.response.headers.location, currentUrl).href;
+          console.log(`[UrlParser] Редирект (через PROXY catch) -> ${nextUrl}`);
+          currentUrl = nextUrl;
+          continue;
+        }
+        console.warn(`[UrlParser] Ошибка прокси-запроса: ${proxyErr.message}`);
+      }
+    }
+
+    // 2. Direct resolution: Try native HTTP/2 (bypasses standard HTTP/1.1 bot filter on RU IPs)
     try {
       const h2Next = await resolveRedirectViaHttp2(currentUrl);
       if (h2Next && h2Next !== currentUrl) {
@@ -135,7 +167,7 @@ async function resolveRedirectUrl(url) {
       console.log(`[UrlParser] HTTP/2 резолв не удался: ${e.message}`);
     }
 
-    // 2. Try global fetch (Node 20+ undici with modern TLS)
+    // 3. Try global fetch (Node 20+ undici with modern TLS)
     try {
       const res = await fetch(currentUrl, {
         redirect: 'manual',
@@ -156,13 +188,8 @@ async function resolveRedirectUrl(url) {
       console.log(`[UrlParser] Fetch резолв не удался: ${e.message}`);
     }
 
-    // 3. Try axios as legacy fallback
+    // 4. Try standard axios fallback
     try {
-      let httpsAgent = null;
-      if (config.proxyUrl) {
-        try { httpsAgent = new HttpsProxyAgent(config.proxyUrl); } catch (_) {}
-      }
-
       const response = await axios.get(currentUrl, {
         maxRedirects: 0,
         validateStatus: (status) => status >= 200 && status < 400,
@@ -170,7 +197,6 @@ async function resolveRedirectUrl(url) {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         },
-        httpsAgent: httpsAgent || undefined,
         timeout: 8000,
       });
 
